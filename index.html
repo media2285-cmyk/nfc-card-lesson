@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>카드를 알아보다 — 결제 체험</title>
+<style>
+  :root{
+    --bg:#000; --fg:#fff; --dim:#b9b9b9;
+    --accent:#ffd400;      /* 14.7:1 on black */
+    --ok:#4ade80;          /* 12:1 */
+    --bad:#ff7a66;         /* 8.2:1 */
+    --line:#4a4a4a;
+    --btn:#1a1a1a;
+    --pad: 0.9rem;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html{font-size:17px}
+  @media (min-width:480px){html{font-size:19px}}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:"Malgun Gothic","맑은 고딕",-apple-system,"Noto Sans KR",sans-serif;
+    font-weight:700; line-height:1.35;
+    min-height:100dvh; overscroll-behavior:none;
+  }
+  button{font:inherit; font-weight:800; color:var(--fg); background:var(--btn);
+    border:3px solid var(--line); border-radius:.7rem; padding:.7rem .6rem; cursor:pointer}
+  button:active{background:#333}
+  button[disabled]{opacity:.35}
+  input,select{font:inherit; font-weight:700; background:#111; color:var(--fg);
+    border:3px solid var(--line); border-radius:.5rem; padding:.5rem; width:100%}
+  .screen{display:none; padding:var(--pad); min-height:100dvh; flex-direction:column; gap:.7rem}
+  .screen.on{display:flex}
+  .grow{flex:1 1 auto; min-height:0}
+  .row{display:flex; gap:.5rem; flex-wrap:wrap}
+  .row>*{flex:1 1 8rem}
+  h1{font-size:1.5rem; margin:.2rem 0}
+  h2{font-size:1.15rem; margin:.9rem 0 .3rem; color:var(--accent)}
+  .muted{color:var(--dim); font-size:.85rem; font-weight:700}
+
+  /* ===== 시작 화면 ===== */
+  #gate{justify-content:center; text-align:center; gap:1.2rem}
+  #startBtn{font-size:1.8rem; padding:1.6rem; border-color:var(--accent); color:var(--accent)}
+
+  /* ===== 결과 패널 ===== */
+  #result{border:4px solid var(--line); border-radius:.9rem; padding:.9rem;
+    display:flex; flex-direction:column; gap:.35rem; min-height:11rem; justify-content:center}
+  #result.ok{border-color:var(--ok)}
+  #result.bad{border-color:var(--bad)}
+  #result.err{border-color:var(--accent)}
+  #rWho{font-size:1.5rem; color:var(--accent)}
+  #rItem{font-size:1.4rem}
+  #rVerdict{font-size:2.6rem; line-height:1.1}
+  #result.ok #rVerdict{color:var(--ok)}
+  #result.bad #rVerdict{color:var(--bad)}
+  #rBal{font-size:2rem}
+  #rNote{font-size:1rem; color:var(--dim)}
+
+  /* ===== 상태줄 ===== */
+  #status{display:flex; gap:.5rem; flex-wrap:wrap; font-size:.85rem; color:var(--dim)}
+  #status span{border:2px solid var(--line); border-radius:.4rem; padding:.15rem .45rem}
+  #status .warn{color:var(--bad); border-color:var(--bad)}
+  #status .good{color:var(--ok); border-color:var(--ok)}
+
+  /* ===== 품목 버튼 ===== */
+  #items{display:grid; grid-template-columns:repeat(2,1fr); gap:.5rem}
+  #items button{font-size:1.25rem; padding:1rem .5rem; line-height:1.2}
+  #items button.sel{border-color:var(--accent); color:var(--accent); background:#2a2400}
+  #items button small{display:block; font-size:.95rem; opacity:.85}
+
+  /* ===== 명단 ===== */
+  #listWrap{border:3px solid var(--line); border-radius:.7rem; overflow:auto; max-height:55dvh}
+  table{width:100%; border-collapse:collapse}
+  td,th{padding:.55rem .5rem; border-bottom:2px solid var(--line); text-align:left; font-size:1.1rem}
+  th{color:var(--accent); font-size:.9rem; position:sticky; top:0; background:#000}
+  td.n{text-align:right; font-variant-numeric:tabular-nums}
+  tr.zero td{color:var(--dim)}
+  .tapme{color:var(--accent); font-size:.8rem}
+
+  .danger{border-color:var(--bad); color:var(--bad)}
+  .field{margin:.5rem 0}
+  .field label{display:block; font-size:.9rem; color:var(--dim); margin-bottom:.2rem}
+  .clip{display:flex; gap:.4rem; align-items:center; margin:.35rem 0}
+  .clip .name{flex:1 1 auto; font-size:1rem}
+  .clip .dot{width:.9rem; height:.9rem; border-radius:50%; background:var(--bad); flex:0 0 auto}
+  .clip .dot.has{background:var(--ok)}
+  .clip button{flex:0 0 auto; padding:.45rem .7rem; font-size:.9rem}
+  .rec{border-color:var(--bad)!important; color:var(--bad)!important}
+</style>
+</head>
+<body>
+
+<!-- ============ 시작 ============ -->
+<section id="gate" class="screen on">
+  <h1>카드를 알아보다</h1>
+  <p class="muted">아래를 한 번 누르면 소리·NFC·화면 켜짐 유지가 함께 켜집니다.<br>수업 전에 미리 눌러 두세요.</p>
+  <button id="startBtn">수업 시작</button>
+  <p id="gateMsg" class="muted"></p>
+</section>
+
+<!-- ============ 메인 ============ -->
+<section id="main" class="screen">
+  <div id="status"></div>
+
+  <div id="result">
+    <div id="rWho">카드를 대주세요</div>
+    <div id="rItem"></div>
+    <div id="rVerdict"></div>
+    <div id="rBal"></div>
+    <div id="rNote"></div>
+  </div>
+
+  <div class="grow"></div>
+
+  <div id="items"></div>
+  <div class="row">
+    <button id="btnList">명단 · 잔액</button>
+    <button id="btnUndo">직전 결제 취소</button>
+  </div>
+  <div class="row">
+    <button id="btnRegister">카드 등록</button>
+    <button id="btnSettings">설정</button>
+  </div>
+</section>
+
+<!-- ============ 명단 ============ -->
+<section id="list" class="screen">
+  <h1>명단 · 잔액</h1>
+  <p class="muted">줄을 누르면 그 카드로 <b>수동 결제</b>됩니다. (NFC가 안 될 때)</p>
+  <div id="listWrap"><table id="listTable"></table></div>
+  <div class="grow"></div>
+  <button data-back="main">돌아가기</button>
+</section>
+
+<!-- ============ 카드 등록 ============ -->
+<section id="register" class="screen">
+  <h1>카드 등록</h1>
+  <p class="muted">카드를 하나씩 대면 아래 목록에 추가됩니다. 이름과 시작 잔액을 채워 주세요.</p>
+  <div id="regMsg" class="muted"></div>
+  <div id="listWrap2" style="border:3px solid var(--line);border-radius:.7rem;overflow:auto;max-height:50dvh">
+    <table id="regTable"></table>
+  </div>
+  <div class="row">
+    <button id="btnAddManual">번호만 추가</button>
+    <button id="btnDefaults">기본 잔액 채우기</button>
+  </div>
+  <div class="grow"></div>
+  <button data-back="main">돌아가기</button>
+</section>
+
+<!-- ============ 설정 ============ -->
+<section id="settings" class="screen">
+  <h1>설정</h1>
+
+  <h2>품목</h2>
+  <div id="itemEdit"></div>
+  <div class="row">
+    <button id="btnAddItem">품목 추가</button>
+  </div>
+
+  <h2>살 수 있는 카드 수 <span class="muted">(시작 잔액 기준)</span></h2>
+  <div id="forecast"></div>
+
+  <h2>음성</h2>
+  <p class="muted">아래 12개를 선생님 목소리로 한 번만 녹음해 두면, 수업 중에는 인터넷도 음성합성도 필요 없습니다.
+  녹음이 없으면 기기의 음성합성으로 대신 말합니다(기기에 한국어 음성이 없으면 조용히 실패할 수 있습니다).</p>
+  <div id="clips"></div>
+  <div class="row"><button id="btnClearVoice" class="danger">녹음 전부 지우기</button></div>
+
+  <h2>위험</h2>
+  <div class="row">
+    <button id="btnReset" class="danger">전체 초기화 (거래만 지움)</button>
+  </div>
+  <p class="muted">카드 등록과 시작 잔액은 남습니다. 다음 반이 바로 시작할 수 있습니다.</p>
+
+  <div class="grow"></div>
+  <button data-back="main">돌아가기</button>
+</section>
+
+<script>
+"use strict";
+
+/* =======================================================================
+   저장소 — 등록(잘 안 변함) / 거래(계속 변함) / 음성 을 분리해 둔다.
+   잔액이라는 저장 값은 어디에도 없다. 항상 이력에서 계산한다.
+   ======================================================================= */
+const K_ROSTER = "card.roster.v1";
+const K_SESSION = "card.session.v1";
+const K_VOICE = "card.voice.v1";
+const SCHEMA = 1;
+
+const DEFAULT_BALANCES = [1000,1500,1500,2000,2000,2500,3000,3000,3500,4000];
+const DEFAULT_ITEMS = [
+  {name:"아이스크림", amount:1000},
+  {name:"음료",       amount:1500},
+  {name:"빵",         amount:2000},
+  {name:"김밥",       amount:3000},
+];
+
+let roster, session, voice = {};
+let schemaProblem = null;
+
+function loadJSON(key){
+  const raw = localStorage.getItem(key);
+  if(raw === null) return null;
+  try { return JSON.parse(raw); }
+  catch(e){ schemaProblem = key + " 저장 내용이 깨졌습니다"; return null; }
+}
+function save(key, obj){
+  try{
+    localStorage.setItem(key, JSON.stringify(obj));
+    // 쓰고 나서 되읽어 검증한다. 조용히 실패하면 수업 끝까지 모른다.
+    if(localStorage.getItem(key) === null) throw new Error("verify failed");
+  }catch(e){
+    flagStorageFailure();
+  }
+}
+let storageBroken = false;
+function flagStorageFailure(){ storageBroken = true; renderStatus(); }
+
+function loadAll(){
+  const r = loadJSON(K_ROSTER);
+  const s = loadJSON(K_SESSION);
+  const v = loadJSON(K_VOICE);
+
+  // 스키마가 다르면 계산하지 않는다. 0원으로 얼버무리는 일은 절대 없어야 한다.
+  if(r && r.schemaVersion !== SCHEMA) schemaProblem = "저장된 카드 등록이 이 버전과 맞지 않습니다";
+  if(s && s.schemaVersion !== SCHEMA) schemaProblem = "저장된 거래 기록이 이 버전과 맞지 않습니다";
+
+  roster  = (r && r.schemaVersion === SCHEMA) ? r : {schemaVersion:SCHEMA, cards:[]};
+  session = (s && s.schemaVersion === SCHEMA) ? s
+          : {schemaVersion:SCHEMA, items:DEFAULT_ITEMS.slice(), ledger:[], selectedItem:0};
+  voice   = v || {};
+  if(!Array.isArray(session.items) || !session.items.length) session.items = DEFAULT_ITEMS.slice();
+  if(!Array.isArray(session.ledger)) session.ledger = [];
+}
+const saveRoster  = () => save(K_ROSTER, roster);
+const saveSession = () => save(K_SESSION, session);
+const saveVoice   = () => save(K_VOICE, voice);
+
+/* ---- 잔액은 계산값이다 ---- */
+function balanceOf(cardNo){
+  const card = roster.cards.find(c => c.no === cardNo);
+  if(!card) return 0;
+  let b = card.startBalance || 0;
+  for(const e of session.ledger){
+    if(e.cardNo === cardNo && e.type === "payment" && !e.voided) b -= e.amount;
+  }
+  return b;
+}
+function cardByUid(uid){ return roster.cards.find(c => c.uid && c.uid === uid); }
+function cardByNo(no){ return roster.cards.find(c => c.no === no); }
+function labelOf(card){ return card.no + "번" + (card.name ? " " + card.name : ""); }
+
+/* =======================================================================
+   소리 — 판정음은 그 자리에서 만들고(파일 0바이트), 말은 녹음 조각을 붙여 쓴다.
+   모든 소리는 하나의 큐로 직렬화한다. 두 명이 동시에 태그해도 겹치지 않게.
+   ======================================================================= */
+let ac = null;
+const buffers = {};       // clipId -> AudioBuffer
+let voiceMode = "none";   // recorded | tts | none
+
+const CLIPS = [
+  {id:"k1", label:"천",   tts:"천"},
+  {id:"k2", label:"이천", tts:"이천"},
+  {id:"k3", label:"삼천", tts:"삼천"},
+  {id:"k4", label:"사천", tts:"사천"},
+  {id:"k5", label:"오천", tts:"오천"},
+  {id:"k6", label:"육천", tts:"육천"},
+  {id:"k7", label:"칠천", tts:"칠천"},
+  {id:"k8", label:"팔천", tts:"팔천"},
+  {id:"k9", label:"구천", tts:"구천"},
+  {id:"h5", label:"오백", tts:"오백"},
+  {id:"paid", label:"원 결제되었습니다", tts:"원 결제되었습니다"},
+  {id:"short", label:"잔액이 부족합니다", tts:"잔액이 부족합니다"},
+];
+
+function tone(freq, dur, type, gainPeak){
+  return new Promise(res => {
+    if(!ac) return res();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type || "sine"; o.frequency.value = freq;
+    const t = ac.currentTime, peak = gainPeak == null ? 0.35 : gainPeak;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.012);
+    g.gain.setValueAtTime(peak, t + dur - 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(ac.destination);
+    o.start(t); o.stop(t + dur + 0.02);
+    setTimeout(res, dur * 1000 + 20);
+  });
+}
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+const sndDetect  = () => tone(1800, 0.06, "sine", 0.30);                                   // 인식음
+const sndOk      = async () => { await tone(880,0.09,"sine",0.35); await tone(1318,0.13,"sine",0.35); };
+const sndDeny    = () => tone(196, 0.45, "square", 0.22);                                  // 거절음(낮고 길게)
+const sndCardErr = async () => { for(let i=0;i<3;i++){ await tone(520,0.07,"triangle",0.28); await wait(55);} };
+
+function playBuffer(buf){
+  return new Promise(res => {
+    const s = ac.createBufferSource();
+    s.buffer = buf; s.connect(ac.destination);
+    s.onended = res; s.start();
+  });
+}
+function speak(text){
+  return new Promise(res => {
+    if(!("speechSynthesis" in window)) return res();
+    try{
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "ko-KR"; u.rate = 1.0;
+      u.onend = res; u.onerror = res;
+      speechSynthesis.speak(u);
+      setTimeout(res, 4000); // 안전장치: 어떤 기기는 onend가 안 온다
+    }catch(e){ res(); }
+  });
+}
+async function say(clipIds){
+  for(const id of clipIds){
+    if(buffers[id]){ await playBuffer(buffers[id]); }
+    else {
+      const c = CLIPS.find(c => c.id === id);
+      if(c) await speak(c.tts);
+    }
+  }
+}
+/* 금액 → 조각 목록. 500원 단위만 다룬다. */
+function amountClips(amount){
+  const out = [];
+  const th = Math.floor(amount / 1000);
+  if(th >= 1 && th <= 9) out.push("k" + th);
+  if(amount % 1000 === 500) out.push("h5");
+  out.push("paid");
+  return out;
+}
+
+/* ---- 오디오 큐: 한 번에 하나씩 ---- */
+let audioChain = Promise.resolve();
+let audioBusy = false;
+function enqueue(fn){
+  audioChain = audioChain.then(async () => {
+    audioBusy = true;
+    try{ await fn(); }catch(e){ console.warn(e); }
+    audioBusy = false;
+  });
+  return audioChain;
+}
+
+function vibrate(pattern){
+  try{ if(navigator.vibrate) navigator.vibrate(pattern); }catch(e){}
+}
+
+/* =======================================================================
+   판정 — NFC와 수동 태그가 완전히 같은 길을 지난다.
+   ======================================================================= */
+const lastAction = {};     // cardNo -> {at, item}  (같은 카드·같은 품목 3초 억제)
+const SUPPRESS_MS = 3000;
+let lastCardNo = null;
+
+// 브라우저가 오디오를 다시 재우는 일이 잦다. 태그마다 조용히 깨워 둔다.
+function ensureAudio(){
+  if(ac && ac.state === "suspended"){ try{ ac.resume(); }catch(e){} }
+}
+
+function handleTag(uid, manualCardNo){
+  ensureAudio();
+  const card = manualCardNo != null ? cardByNo(manualCardNo) : cardByUid(uid);
+
+  // 등록 화면에서는 태그가 '등록'을 뜻한다
+  if(current === "register"){ registerTag(uid); return; }
+  if(current !== "main") return;
+
+  if(!card){
+    // 미등록 카드 — 잔액 부족과 다른 소리를 낸다.
+    // 같은 소리를 쓰면 학생이 "내 카드는 가끔 돈이 없다"를 배운다.
+    enqueue(async () => { await sndDetect(); await wait(250); await sndCardErr(); });
+    vibrate([40,60,40,60,40]);
+    showResult("err", "카드 오류", "", "등록 안 됨",
+      "", "카드 등록 화면에서 추가하세요" + (uid ? " · " + uid : ""));
+    return;
+  }
+
+  const now = Date.now();
+  const prev = lastAction[card.no];
+  if(prev && now - prev.at < SUPPRESS_MS && prev.item === session.selectedItem){
+    // 카드를 떼지 않은 것. 물리적으로 한 번의 태그다 → 완전 무음.
+    // 다른 카드는 억제하지 않는다.
+    // 품목이 바뀌었으면 강사가 일부러 바꾼 것이니 억제하지 않는다 —
+    // 부족을 겪고 더 싼 걸 다시 고르는 '2차 기회'가 여기서 막히면 안 된다.
+    return;
+  }
+  lastAction[card.no] = {at: now, item: session.selectedItem};
+  lastCardNo = card.no;
+
+  const item = session.items[session.selectedItem];
+  if(!item){
+    enqueue(async () => { await sndDetect(); });
+    showResult("err", labelOf(card), "", "품목 먼저",
+      "", "아래에서 품목을 고른 뒤 다시 대주세요");
+    return;
+  }
+
+  const before = balanceOf(card.no);
+
+  if(before >= item.amount){
+    session.ledger.push({
+      id: "p" + now + "-" + card.no,
+      cardNo: card.no, type: "payment",
+      itemName: item.name, amount: item.amount,
+      at: new Date(now).toISOString(), voided: false
+    });
+    saveSession();
+    undoLocked = false;          // 새 결제가 생겼으니 취소를 다시 연다
+    const after = balanceOf(card.no);
+    enqueue(async () => {
+      await sndDetect(); await wait(250); await sndOk();
+      await say(amountClips(item.amount));
+    });
+    vibrate(60);
+    showResult("ok", labelOf(card), item.name + " " + won(item.amount),
+      "승인", won(before) + " → " + won(after), "");
+  } else {
+    // 이력에 아무것도 남기지 않는다. 잔액은 줄지 않는다.
+    enqueue(async () => {
+      await sndDetect(); await wait(250); await sndDeny();
+      await say(["short"]);
+    });
+    vibrate([120,80,120]);
+    showResult("bad", labelOf(card), item.name + " " + won(item.amount),
+      "부족", won(before) + " → 그대로", won(item.amount - before) + " 모자랍니다");
+  }
+  renderUndo();
+}
+
+function won(n){ return n.toLocaleString("ko-KR") + "원"; }
+
+function showResult(kind, who, item, verdict, bal, note){
+  const box = document.getElementById("result");
+  box.className = kind || "";
+  document.getElementById("rWho").textContent = who;
+  document.getElementById("rItem").textContent = item;
+  document.getElementById("rVerdict").textContent = verdict;
+  // 잔액 숫자는 스크린리더가 읽지 못하게 한다.
+  // 앱이 금액을 말하지 않는다는 원칙이 앱 밖 경로로 깨지면 안 된다.
+  const b = document.getElementById("rBal");
+  b.textContent = bal; b.setAttribute("aria-hidden","true");
+  const nt = document.getElementById("rNote");
+  nt.textContent = note; nt.setAttribute("aria-hidden","true");
+}
+
+/* =======================================================================
+   화면 전환
+   ======================================================================= */
+let current = "gate";
+function show(id){
+  document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === id));
+  current = id;
+  if(id === "main"){ renderItems(); renderUndo(); renderStatus(); }
+  if(id === "list") renderList();
+  if(id === "register") renderRegister();
+  if(id === "settings"){ renderItemEdit(); renderForecast(); renderClips(); }
+  window.scrollTo(0,0);
+}
+document.querySelectorAll("[data-back]").forEach(b =>
+  b.addEventListener("click", () => show(b.dataset.back)));
+
+/* =======================================================================
+   메인 화면 그리기
+   ======================================================================= */
+function renderItems(){
+  const box = document.getElementById("items");
+  box.innerHTML = "";
+  session.items.forEach((it, i) => {
+    const b = document.createElement("button");
+    b.className = i === session.selectedItem ? "sel" : "";
+    b.innerHTML = it.name + "<small>" + won(it.amount) + "</small>";
+    b.addEventListener("click", () => {
+      session.selectedItem = i; saveSession(); renderItems();
+    });
+    box.appendChild(b);
+  });
+}
+
+function lastPayment(){
+  for(let i = session.ledger.length - 1; i >= 0; i--){
+    const e = session.ledger[i];
+    if(e.type === "payment" && !e.voided) return e;
+  }
+  return null;
+}
+// 취소는 한 번에 1건만. 취소 뒤에는 새 결제가 생기기 전까지 잠근다.
+// 연타로 과거 거래가 줄줄이 풀리는 사고를 구조적으로 막는다.
+let undoLocked = false;
+
+function renderUndo(){
+  const b = document.getElementById("btnUndo");
+  const p = lastPayment();
+  b.disabled = !p || undoLocked;
+  b.textContent = undoLocked ? "취소함 (다음 결제까지 잠김)"
+    : p ? "취소: " + p.cardNo + "번 " + p.itemName + " " + won(p.amount)
+        : "직전 결제 취소";
+}
+document.getElementById("btnUndo").addEventListener("click", () => {
+  const p = lastPayment();
+  if(!p) return;
+  if(!confirm(p.cardNo + "번 " + p.itemName + " " + won(p.amount) + " 결제를 취소할까요?")) return;
+  p.voided = true;
+  session.ledger.push({
+    id:"v"+Date.now(), cardNo:p.cardNo, type:"void",
+    itemName:p.itemName, amount:p.amount,
+    at:new Date().toISOString(), voidsId:p.id
+  });
+  saveSession();
+  undoLocked = true;
+  const c = cardByNo(p.cardNo);
+  showResult("", c ? labelOf(c) : p.cardNo+"번", p.itemName + " " + won(p.amount),
+    "취소됨", "지금 " + won(balanceOf(p.cardNo)), "");
+  renderUndo();
+});
+
+function renderStatus(){
+  const s = document.getElementById("status");
+  const nfc = nfcState;
+  const parts = [];
+  parts.push(nfc === "on"
+    ? `<span class="good">NFC 켜짐</span>`
+    : `<span class="warn" id="nfcRetry">NFC ${nfc==="unsupported"?"미지원":"꺼짐"}${nfc==="unsupported"?"":" · 눌러 다시 켜기"}</span>`);
+  const sndOn = !!ac && ac.state === "running";
+  parts.push(`<span class="${sndOn?"good":"warn"}">소리 ${sndOn?"켜짐":"꺼짐"}</span>`);
+  const rec = CLIPS.filter(c => voice[c.id]).length;
+  parts.push(`<span class="${rec===CLIPS.length?"good":""}">음성 ${rec}/${CLIPS.length}${rec===CLIPS.length?"":" (합성 대체)"}</span>`);
+  parts.push(`<span>카드 ${roster.cards.length}장</span>`);
+  if(storageBroken) parts.push(`<span class="warn">저장 실패 — 새로고침 금지</span>`);
+  if(schemaProblem) parts.push(`<span class="warn">${schemaProblem}</span>`);
+  if(!wakeLock) parts.push(`<span>화면 유지 안 됨</span>`);
+  s.innerHTML = parts.join("");
+
+  const retry = document.getElementById("nfcRetry");
+  if(retry && nfc !== "unsupported"){
+    retry.style.cursor = "pointer";
+    retry.addEventListener("click", startScan);
+  }
+}
+
+// 스캔이 풀렸을 때 강사가 눌러 되살릴 수 있어야 한다
+async function startScan(){
+  if(!("NDEFReader" in window)){ nfcState = "unsupported"; renderStatus(); return; }
+  try{
+    if(!ndef){
+      ndef = new NDEFReader();
+      ndef.onreading = ev => handleTag(normUid(ev.serialNumber));
+      ndef.onreadingerror = () => { /* 안 읽힘 = 무음. 다시 대면 된다 */ };
+    }
+    await ndef.scan();
+    nfcState = "on";
+  }catch(e){ nfcState = "off"; }
+  renderStatus();
+}
+
+/* =======================================================================
+   명단 · 수동 태그
+   ======================================================================= */
+document.getElementById("btnList").addEventListener("click", () => show("list"));
+function renderList(){
+  const t = document.getElementById("listTable");
+  if(!roster.cards.length){
+    t.innerHTML = "<tr><td>등록된 카드가 없습니다. ‘카드 등록’에서 추가하세요.</td></tr>";
+    return;
+  }
+  let h = "<tr><th>카드</th><th>시작</th><th>지금</th><th></th></tr>";
+  for(const c of roster.cards){
+    const b = balanceOf(c.no);
+    h += `<tr data-no="${c.no}" class="${b===0?"zero":""}">
+      <td>${c.no}번 ${c.name||""}</td>
+      <td class="n" aria-hidden="true">${won(c.startBalance||0)}</td>
+      <td class="n" aria-hidden="true">${won(b)}</td>
+      <td class="tapme">결제</td></tr>`;
+  }
+  t.innerHTML = h;
+  t.querySelectorAll("tr[data-no]").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const no = Number(tr.dataset.no);
+      const it = session.items[session.selectedItem];
+      if(!it){ alert("품목을 먼저 고르세요."); return; }
+      if(!confirm(no + "번 카드로 " + it.name + " " + won(it.amount) + " 결제할까요?")) return;
+      show("main");
+      handleTag(null, no);       // NFC와 같은 길을 지난다
+    });
+  });
+}
+
+/* =======================================================================
+   카드 등록
+   ======================================================================= */
+document.getElementById("btnRegister").addEventListener("click", () => show("register"));
+function nextNo(){
+  let n = 1;
+  while(roster.cards.some(c => c.no === n)) n++;
+  return n;
+}
+function registerTag(uid){
+  const msg = document.getElementById("regMsg");
+  if(!uid){ msg.textContent = "카드 번호를 읽지 못했습니다."; return; }
+  const dup = cardByUid(uid);
+  if(dup){   // 사후 탐지가 아니라 입력 시점에 막는다
+    msg.textContent = "이미 " + dup.no + "번으로 등록된 카드입니다.";
+    enqueue(sndCardErr);
+    return;
+  }
+  const no = nextNo();
+  roster.cards.push({no, uid, name:"", startBalance: DEFAULT_BALANCES[(no-1) % DEFAULT_BALANCES.length]});
+  roster.cards.sort((a,b) => a.no - b.no);
+  saveRoster();
+  msg.textContent = no + "번으로 등록했습니다.";
+  enqueue(async () => { await sndDetect(); await wait(150); await sndOk(); });
+  renderRegister();
+}
+document.getElementById("btnAddManual").addEventListener("click", () => {
+  const no = nextNo();
+  roster.cards.push({no, uid:null, name:"", startBalance: DEFAULT_BALANCES[(no-1) % DEFAULT_BALANCES.length]});
+  saveRoster(); renderRegister();
+});
+document.getElementById("btnDefaults").addEventListener("click", () => {
+  roster.cards.forEach((c,i) => c.startBalance = DEFAULT_BALANCES[i % DEFAULT_BALANCES.length]);
+  saveRoster(); renderRegister();
+});
+function renderRegister(){
+  const t = document.getElementById("regTable");
+  if(!roster.cards.length){ t.innerHTML = "<tr><td>카드를 대주세요.</td></tr>"; return; }
+  let h = "<tr><th>번호</th><th>이름</th><th>시작 잔액</th><th></th></tr>";
+  for(const c of roster.cards){
+    h += `<tr>
+      <td>${c.no}번<br><span class="muted">${c.uid ? c.uid.slice(0,11) : "UID 없음"}</span></td>
+      <td><input data-no="${c.no}" data-f="name" value="${(c.name||"").replace(/"/g,"&quot;")}" placeholder="이름"></td>
+      <td><input data-no="${c.no}" data-f="bal" type="number" step="500" min="0" value="${c.startBalance||0}"></td>
+      <td><button data-del="${c.no}" class="danger">삭제</button></td></tr>`;
+  }
+  t.innerHTML = h;
+  t.querySelectorAll("input").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const c = cardByNo(Number(inp.dataset.no)); if(!c) return;
+      if(inp.dataset.f === "name") c.name = inp.value.trim();
+      else c.startBalance = Math.max(0, Math.round(Number(inp.value)/500)*500);
+      saveRoster();
+    });
+  });
+  t.querySelectorAll("button[data-del]").forEach(b => {
+    b.addEventListener("click", () => {
+      const no = Number(b.dataset.del);
+      if(!confirm(no + "번 카드를 등록에서 지울까요? (거래 기록은 남습니다)")) return;
+      roster.cards = roster.cards.filter(c => c.no !== no);
+      saveRoster(); renderRegister();
+    });
+  });
+}
+
+/* =======================================================================
+   설정
+   ======================================================================= */
+document.getElementById("btnSettings").addEventListener("click", () => show("settings"));
+
+function renderItemEdit(){
+  const box = document.getElementById("itemEdit");
+  box.innerHTML = "";
+  session.items.forEach((it, i) => {
+    const d = document.createElement("div");
+    d.className = "row";
+    d.innerHTML = `<input value="${it.name.replace(/"/g,"&quot;")}" data-i="${i}" data-f="name">
+      <input type="number" step="500" min="500" max="9500" value="${it.amount}" data-i="${i}" data-f="amt" style="flex:0 1 7rem">
+      <button data-rm="${i}" class="danger" style="flex:0 0 4.5rem">삭제</button>`;
+    box.appendChild(d);
+  });
+  box.querySelectorAll("input").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const it = session.items[Number(inp.dataset.i)]; if(!it) return;
+      if(inp.dataset.f === "name") it.name = inp.value.trim() || "품목";
+      else {
+        // 500원 단위로 맞춘다. 음성 조각이 500 단위만 표현한다.
+        let v = Math.round(Number(inp.value)/500)*500;
+        it.amount = Math.min(9500, Math.max(500, v));
+        inp.value = it.amount;
+      }
+      saveSession(); renderForecast();
+    });
+  });
+  box.querySelectorAll("button[data-rm]").forEach(b => {
+    b.addEventListener("click", () => {
+      if(session.items.length <= 1) return;
+      session.items.splice(Number(b.dataset.rm),1);
+      if(session.selectedItem >= session.items.length) session.selectedItem = 0;
+      saveSession(); renderItemEdit(); renderForecast();
+    });
+  });
+}
+document.getElementById("btnAddItem").addEventListener("click", () => {
+  session.items.push({name:"품목", amount:1000});
+  saveSession(); renderItemEdit(); renderForecast();
+});
+
+/* 강사가 실패 인원을 교실에 들어가기 전에 가늠할 수 있어야 한다 */
+function renderForecast(){
+  const box = document.getElementById("forecast");
+  const n = roster.cards.length;
+  if(!n){ box.innerHTML = "<p class='muted'>등록된 카드가 없습니다.</p>"; return; }
+  let h = "<table><tr><th>품목</th><th>살 수 있음</th><th>부족</th></tr>";
+  for(const it of session.items){
+    const can = roster.cards.filter(c => (c.startBalance||0) >= it.amount).length;
+    h += `<tr><td>${it.name} ${won(it.amount)}</td>
+      <td class="n" style="color:var(--ok)">${can}장</td>
+      <td class="n" style="color:var(--bad)">${n-can}장</td></tr>`;
+  }
+  box.innerHTML = h + "</table>";
+}
+
+document.getElementById("btnReset").addEventListener("click", () => {
+  if(!confirm("거래 기록을 전부 지웁니다. 카드 등록과 시작 잔액은 남습니다.\n계속할까요?")) return;
+  if(!confirm("정말 지울까요? 되돌릴 수 없습니다.")) return;
+  session.ledger = [];
+  saveSession();
+  for(const k in lastAction) delete lastAction[k];
+  undoLocked = false;
+  alert("초기화했습니다. 모든 카드가 시작 잔액으로 돌아갔습니다.");
+  show("main");
+});
+
+/* =======================================================================
+   음성 녹음 — 선생님 목소리 12조각.
+   수업 당일 인터넷도 음성합성도 타지 않게 하려는 것이다.
+   ======================================================================= */
+let mediaRec = null, recChunks = [], recId = null;
+function renderClips(){
+  const box = document.getElementById("clips");
+  box.innerHTML = "";
+  CLIPS.forEach(c => {
+    const d = document.createElement("div");
+    d.className = "clip";
+    d.innerHTML = `<span class="dot ${voice[c.id]?"has":""}"></span>
+      <span class="name">${c.label}</span>
+      <button data-rec="${c.id}">${voice[c.id]?"다시":"녹음"}</button>
+      <button data-play="${c.id}">듣기</button>`;
+    box.appendChild(d);
+  });
+  box.querySelectorAll("button[data-rec]").forEach(b => {
+    b.addEventListener("click", () => toggleRecord(b.dataset.rec, b));
+  });
+  box.querySelectorAll("button[data-play]").forEach(b => {
+    b.addEventListener("click", () => enqueue(() => say([b.dataset.play])));
+  });
+}
+async function toggleRecord(id, btn){
+  if(mediaRec && mediaRec.state === "recording"){
+    mediaRec.stop();
+    return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    recChunks = []; recId = id;
+    mediaRec = new MediaRecorder(stream);
+    mediaRec.ondataavailable = e => { if(e.data.size) recChunks.push(e.data); };
+    mediaRec.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(recChunks, {type: mediaRec.mimeType || "audio/webm"});
+      const fr = new FileReader();
+      fr.onload = async () => {
+        voice[recId] = fr.result;
+        saveVoice();
+        await decodeClip(recId);
+        renderClips(); renderStatus();
+      };
+      fr.readAsDataURL(blob);
+      btn.classList.remove("rec"); btn.textContent = "다시";
+    };
+    mediaRec.start();
+    btn.classList.add("rec"); btn.textContent = "■ 멈춤";
+  }catch(e){
+    alert("마이크를 쓸 수 없습니다. 녹음 없이도 수업은 됩니다(기기 음성합성으로 대신 말합니다).");
+  }
+}
+document.getElementById("btnClearVoice").addEventListener("click", () => {
+  if(!confirm("녹음한 음성을 전부 지울까요?")) return;
+  voice = {}; saveVoice();
+  for(const c of CLIPS) delete buffers[c.id];
+  renderClips(); renderStatus();
+});
+
+async function decodeClip(id){
+  if(!ac || !voice[id]) return;
+  try{
+    const res = await fetch(voice[id]);
+    const ab = await res.arrayBuffer();
+    buffers[id] = await ac.decodeAudioData(ab);
+  }catch(e){ delete buffers[id]; }
+}
+async function decodeAllClips(){
+  for(const c of CLIPS) await decodeClip(c.id);
+  const n = CLIPS.filter(c => buffers[c.id]).length;
+  voiceMode = n === CLIPS.length ? "recorded" : (n ? "recorded" : "tts");
+}
+
+/* =======================================================================
+   시작 — 터치 한 번에 소리·NFC·화면 유지를 함께 켠다
+   ======================================================================= */
+let nfcState = "off";     // on | off | unsupported
+let wakeLock = null;
+let ndef = null;
+
+document.getElementById("startBtn").addEventListener("click", async () => {
+  const msg = document.getElementById("gateMsg");
+  const notes = [];
+
+  // 1) 오디오 — 만들기·깨우기·조각 해독을 따로 감싼다.
+  //    하나가 실패해도 나머지는 살아 있어야 한다.
+  try{ ac = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){ ac = null; }
+  if(ac){
+    try{ if(ac.state === "suspended") await ac.resume(); }catch(e){}
+    try{ await tone(1, 0.01, "sine", 0.0001); }catch(e){}   // 무음 발화로 깨우기
+    try{ await decodeAllClips(); }catch(e){}
+  }
+  if(!ac || ac.state !== "running") notes.push("소리가 아직 안 켜졌습니다 — 화면을 한 번 더 누르세요");
+
+  // 2) NFC
+  await startScan();
+  if(nfcState === "off")
+    notes.push("NFC를 켜지 못했습니다 — 상태줄의 ‘NFC 꺼짐’을 눌러 다시 시도하거나, 명단 화면에서 수동 결제로 진행하세요");
+  if(nfcState === "unsupported")
+    notes.push("이 브라우저는 NFC를 지원하지 않습니다 — 안드로이드 크롬에서 열어 주세요. 수동 결제는 됩니다");
+
+  // 3) 화면 꺼짐 방지
+  await requestWakeLock();
+
+  msg.textContent = notes.join(" / ");
+  show("main");
+});
+
+function normUid(s){ return (s || "").toLowerCase(); }
+
+async function requestWakeLock(){
+  try{
+    if("wakeLock" in navigator){
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; renderStatus(); });
+    }
+  }catch(e){ wakeLock = null; }
+}
+
+/* 앱이 뒤로 갔다 오면 스캔과 화면 유지가 풀린다. 돌아올 때 되살린다. */
+document.addEventListener("visibilitychange", async () => {
+  if(document.visibilityState !== "visible") return;
+  if(!wakeLock) await requestWakeLock();
+  if(nfcState !== "unsupported") await startScan();
+  if(ac && ac.state === "suspended"){ try{ await ac.resume(); }catch(e){} }
+  renderStatus();
+});
+
+/* 키보드 1~9,0 수동 태그 — NFC와 같은 길을 지난다 */
+document.addEventListener("keydown", e => {
+  if(current !== "main") return;
+  if(e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+  if(!/^[0-9]$/.test(e.key)) return;
+  const no = e.key === "0" ? 10 : Number(e.key);
+  if(cardByNo(no)) handleTag(null, no);
+});
+
+/* 어디를 눌러도 소리를 깨운다 — "화면을 한 번 더 누르세요" 안내가 실제로 통하도록 */
+document.getElementById("main").addEventListener("click", () => {
+  const was = ac && ac.state === "running";
+  ensureAudio();
+  if(!was) setTimeout(renderStatus, 150);
+});
+
+/* ---- 부팅 ---- */
+loadAll();
+if(schemaProblem){
+  document.getElementById("gateMsg").textContent =
+    schemaProblem + " — 자동으로 지우지 않았습니다. 설정에서 확인하세요.";
+}
+</script>
+</body>
+</html>

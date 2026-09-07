@@ -1,0 +1,16 @@
+# === 데이터·개인정보·로컬설정 차단 (공통 조각) ===
+*.xlsx
+*.xls
+*.csv
+.env
+.env.*
+*.pem
+*.p12
+.clasprc.json
+*credentials*.json
+service*account*.json
+__pycache__/
+.claude/settings.local.json
+
+# 내부 기획 문서 — 공개 저장소에 넣지 않음 (바탕화면 폴더에만 보관)
+기획토론/
