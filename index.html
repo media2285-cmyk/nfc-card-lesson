@@ -78,14 +78,13 @@
   .tapme{color:var(--accent); font-size:.8rem}
 
   .danger{border-color:var(--bad); color:var(--bad)}
+  /* 품목 한 줄 — 줄바꿈 금지. 삭제 버튼이 다음 품목 위로 내려가면 잘못 누른다 */
+  .itemrow{display:flex; gap:.4rem; flex-wrap:nowrap; align-items:center; margin:.4rem 0}
+  .itemrow input[type=text]{flex:1 1 auto; min-width:0}
+  .itemrow input[type=number]{flex:0 0 5.2rem; text-align:right}
+  .itemrow button{flex:0 0 3.4rem; padding:.5rem .2rem; font-size:.9rem}
   .field{margin:.5rem 0}
   .field label{display:block; font-size:.9rem; color:var(--dim); margin-bottom:.2rem}
-  .clip{display:flex; gap:.4rem; align-items:center; margin:.35rem 0}
-  .clip .name{flex:1 1 auto; font-size:1rem}
-  .clip .dot{width:.9rem; height:.9rem; border-radius:50%; background:var(--bad); flex:0 0 auto}
-  .clip .dot.has{background:var(--ok)}
-  .clip button{flex:0 0 auto; padding:.45rem .7rem; font-size:.9rem}
-  .rec{border-color:var(--bad)!important; color:var(--bad)!important}
 </style>
 </head>
 <body>
@@ -161,14 +160,6 @@
   <h2>살 수 있는 카드 수 <span class="muted">(시작 잔액 기준)</span></h2>
   <div id="forecast"></div>
 
-  <h2>삑 소리</h2>
-  <p class="muted">카드가 읽힌 순간에 나는 소리입니다. 들어보고 고르세요.</p>
-  <div id="beeps"></div>
-
-  <h2>음성 들어보기</h2>
-  <p class="muted">기계음이 앱 안에 미리 들어 있습니다. 녹음할 것도, 인터넷도 필요 없습니다.</p>
-  <div id="clips"></div>
-
   <h2>위험</h2>
   <div class="row">
     <button id="btnReset" class="danger">전체 초기화 (거래만 지움)</button>
@@ -232,7 +223,6 @@ function loadAll(){
           : {schemaVersion:SCHEMA, items:DEFAULT_ITEMS.slice(), ledger:[], selectedItem:0};
   if(!Array.isArray(session.items) || !session.items.length) session.items = DEFAULT_ITEMS.slice();
   if(!Array.isArray(session.ledger)) session.ledger = [];
-  if(session.beepId && BEEPS[session.beepId]) beepId = session.beepId;
 }
 const saveRoster  = () => save(K_ROSTER, roster);
 const saveSession = () => save(K_SESSION, session);
@@ -317,15 +307,8 @@ function tone(freq, dur, type, gainPeak){
 }
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
-/* 인식음(삑) — 교통카드 단말기 느낌. 강사가 설정에서 고를 수 있다. */
-const BEEPS = {
-  bright: {label:"밝은 삑 (기본)",   play: () => tone(2730, 0.09, "triangle", 0.34)},
-  sharp:  {label:"더 높고 단단한 삑", play: () => tone(3150, 0.075, "square",  0.20)},
-  twice:  {label:"두 번 삑",         play: async () => { await tone(2730,0.045,"triangle",0.32); await wait(45); await tone(2730,0.045,"triangle",0.32); }},
-  soft:   {label:"낮고 부드러운 삑",  play: () => tone(1800, 0.06, "sine",     0.30)},
-};
-let beepId = "bright";
-const sndDetect = () => (BEEPS[beepId] || BEEPS.bright).play();
+/* 인식음(삑) — 교통카드 단말기 느낌으로 밝고 짧게 */
+const sndDetect = () => tone(2730, 0.09, "triangle", 0.34);
 const sndOk      = async () => { await tone(880,0.09,"sine",0.35); await tone(1318,0.13,"sine",0.35); };
 const sndDeny    = () => tone(196, 0.45, "square", 0.22);                                  // 거절음(낮고 길게)
 const sndCardErr = async () => { for(let i=0;i<3;i++){ await tone(520,0.07,"triangle",0.28); await wait(55);} };
@@ -479,7 +462,7 @@ function show(id){
   if(id === "main"){ renderItems(); renderUndo(); renderStatus(); }
   if(id === "list") renderList();
   if(id === "register") renderRegister();
-  if(id === "settings"){ renderItemEdit(); renderForecast(); renderBeeps(); renderClips(); }
+  if(id === "settings"){ renderItemEdit(); renderForecast(); }
   window.scrollTo(0,0);
 }
 document.querySelectorAll("[data-back]").forEach(b =>
@@ -687,10 +670,10 @@ function renderItemEdit(){
   box.innerHTML = "";
   session.items.forEach((it, i) => {
     const d = document.createElement("div");
-    d.className = "row";
-    d.innerHTML = `<input value="${it.name.replace(/"/g,"&quot;")}" data-i="${i}" data-f="name">
-      <input type="number" step="500" min="500" max="9500" value="${it.amount}" data-i="${i}" data-f="amt" style="flex:0 1 7rem">
-      <button data-rm="${i}" class="danger" style="flex:0 0 4.5rem">삭제</button>`;
+    d.className = "itemrow";
+    d.innerHTML = `<input type="text" value="${it.name.replace(/"/g,"&quot;")}" data-i="${i}" data-f="name">
+      <input type="number" step="500" min="500" max="9500" value="${it.amount}" data-i="${i}" data-f="amt">
+      <button data-rm="${i}" class="danger">삭제</button>`;
     box.appendChild(d);
   });
   box.querySelectorAll("input").forEach(inp => {
@@ -748,48 +731,8 @@ document.getElementById("btnReset").addEventListener("click", () => {
 
 /* =======================================================================
    음성 — 미리 넣어둔 기계음(VOICE_DATA)을 쓴다. 녹음도 인터넷도 필요 없다.
+   설정할 것이 없으므로 화면도 없다.
    ======================================================================= */
-function renderClips(){
-  const box = document.getElementById("clips");
-  box.innerHTML = "";
-  clipList().forEach(id => {
-    const d = document.createElement("div");
-    d.className = "clip";
-    const label = id === "short" ? "잔액이 부족합니다" : won(Number(id.slice(1))) + " 결제되었습니다";
-    d.innerHTML = `<span class="dot ${VOICE_DATA[id]?"has":""}"></span>
-      <span class="name">${label}</span>
-      <button data-play="${id}">듣기</button>`;
-    box.appendChild(d);
-  });
-  box.querySelectorAll("button[data-play]").forEach(b => {
-    b.addEventListener("click", () => enqueue(() => say(b.dataset.play)));
-  });
-}
-
-/* 삑 소리 고르기 — 저는 소리를 들을 수 없으니 강사가 귀로 고른다 */
-function renderBeeps(){
-  const box = document.getElementById("beeps");
-  box.innerHTML = "";
-  Object.entries(BEEPS).forEach(([id, b]) => {
-    const d = document.createElement("div");
-    d.className = "clip";
-    d.innerHTML = `<span class="dot ${id===beepId?"has":""}"></span>
-      <span class="name">${b.label}</span>
-      <button data-beep="${id}">들어보기</button>
-      <button data-pick="${id}">${id===beepId?"사용 중":"이걸로"}</button>`;
-    box.appendChild(d);
-  });
-  box.querySelectorAll("button[data-beep]").forEach(el =>
-    el.addEventListener("click", () => enqueue(() => (BEEPS[el.dataset.beep]).play())));
-  box.querySelectorAll("button[data-pick]").forEach(el =>
-    el.addEventListener("click", () => {
-      beepId = el.dataset.pick;
-      session.beepId = beepId; saveSession();
-      renderBeeps();
-      enqueue(sndDetect);
-    }));
-}
-
 async function decodeClip(id){
   if(!ac || !VOICE_DATA[id]) return;
   try{
