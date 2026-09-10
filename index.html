@@ -820,6 +820,7 @@ let ndef = null;
 document.getElementById("startBtn").addEventListener("click", async () => {
   const msg = document.getElementById("gateMsg");
   const notes = [];
+  const cameFromCard = pendingCardNo != null;   // 카드 URL로 들어왔다 — NFC가 없어도 정상이다
 
   // 1) 오디오 — 만들기·깨우기·조각 해독을 따로 감싼다.
   //    하나가 실패해도 나머지는 살아 있어야 한다.
@@ -835,7 +836,8 @@ document.getElementById("startBtn").addEventListener("click", async () => {
   await startScan();
   if(nfcState === "off")
     notes.push("NFC를 켜지 못했습니다 — 상태줄의 ‘NFC 꺼짐’을 눌러 다시 시도하거나, 명단 화면에서 수동 결제로 진행하세요");
-  if(nfcState === "unsupported")
+  // 카드 URL로 들어왔으면 NFC 미지원은 알릴 일이 아니다. 그 경로는 NFC를 안 쓴다.
+  if(nfcState === "unsupported" && !cameFromCard)
     notes.push("이 브라우저는 NFC를 지원하지 않습니다 — 안드로이드 크롬에서 열어 주세요. 수동 결제는 됩니다");
 
   // 3) 화면 꺼짐 방지
@@ -843,6 +845,16 @@ document.getElementById("startBtn").addEventListener("click", async () => {
 
   msg.textContent = notes.join(" / ");
   show("main");
+
+  // 카드 URL로 들어왔으면 이 버튼 한 번이 곧 결제다.
+  // 방금 사용자가 눌렀으니 소리도 이미 열려 있다.
+  if(cameFromCard){
+    const no = pendingCardNo;
+    pendingCardNo = null;
+    // 주소에서 지운다. 새로고침·뒤로가기가 이중 결제가 되면 안 된다.
+    try{ history.replaceState(null, "", location.pathname); }catch(e){}
+    handleTag(null, no);
+  }
 });
 
 function normUid(s){ return (s || "").toLowerCase(); }
@@ -883,6 +895,33 @@ document.getElementById("main").addEventListener("click", () => {
 
 /* ---- 부팅 ---- */
 loadAll();
+
+/* ---- 카드 URL로 들어온 경우 (아이폰) ----
+   아이폰은 웹에서 NFC를 읽지 못한다. 대신 카드에 URL 레코드를 넣어 두면
+   iOS가 태그를 읽어 알림 배너를 띄우고, 그걸 누르면 여기로 들어온다.
+   페이지가 새로 뜨는 셈이라 소리는 잠긴 상태다.
+
+   그래서 결제를 자동으로 처리하지 않고 시작 버튼에 맡긴다.
+   버튼 한 번에 소리도 켜지고 결제도 된다 — 누르는 횟수를 늘리지 않는다.
+   자동 처리하면 새로고침이나 뒤로가기가 그대로 이중 결제가 된다. */
+let pendingCardNo = null;
+(function readCardParam(){
+  let n;
+  try{ n = Number(new URLSearchParams(location.search).get("card")); }
+  catch(e){ return; }
+  if(!Number.isInteger(n) || n < 1 || n > 99) return;
+  pendingCardNo = n;
+  ensureCard(n, null);          // 카드가 번호를 들고 왔으니 명단 자리를 만든다
+})();
+
+if(pendingCardNo != null){
+  const it = session.items[session.selectedItem];
+  document.getElementById("startBtn").textContent =
+    pendingCardNo + "번" + (it ? " · " + it.name + " " + won(it.amount) : "") + " — 눌러서 결제";
+  document.querySelector("#gate p").innerHTML =
+    "카드를 읽었습니다.<br>아래를 누르면 <b>결제되고 소리가 납니다</b>.";
+}
+
 if(schemaProblem){
   document.getElementById("gateMsg").textContent =
     schemaProblem + " — 자동으로 지우지 않았습니다. 설정에서 확인하세요.";
