@@ -143,6 +143,9 @@
     <table id="regTable"></table>
   </div>
   <div class="row">
+    <button id="btnMakeSet">1~10번 한 세트로 맞추기</button>
+  </div>
+  <div class="row">
     <button id="btnAddManual">번호만 추가</button>
     <button id="btnDefaults">기본 잔액 채우기</button>
   </div>
@@ -763,8 +766,26 @@ document.getElementById("btnAddManual").addEventListener("click", () => {
   saveRoster(); renderRegister();
 });
 document.getElementById("btnDefaults").addEventListener("click", () => {
-  roster.cards.forEach((c,i) => c.startBalance = DEFAULT_BALANCES[i % DEFAULT_BALANCES.length]);
+  // 목록에서의 위치가 아니라 카드 번호로 정한다.
+  // 중간 번호가 빠져 있으면 위치 기준은 전부 한 칸씩 밀린 금액을 준다.
+  roster.cards.forEach(c => c.startBalance = DEFAULT_BALANCES[(c.no-1) % DEFAULT_BALANCES.length]);
   saveRoster(); renderRegister();
+  document.getElementById("regMsg").textContent = "시작 잔액을 카드 번호에 맞게 다시 채웠습니다.";
+});
+
+/* 한 세트가 10장이다. 한 장씩 대서 맞추는 대신 명단을 통째로 세운다.
+   잘못 인식된 카드가 쌓였을 때 되돌릴 방법이 이것뿐이다. */
+document.getElementById("btnMakeSet").addEventListener("click", e => {
+  if(!confirmTwice("makeset", e.currentTarget,
+      "한 번 더 누르면 명단을 1~10번으로 다시 세웁니다")) return;
+  const keep = new Map(roster.cards.map(c => [c.no, c]));
+  roster.cards = DEFAULT_BALANCES.map((bal, i) => {
+    const old = keep.get(i+1);                 // 이미 있던 카드의 UID와 이름은 살린다
+    return {no:i+1, uid: old ? old.uid : null, name: old ? old.name : "", startBalance: bal};
+  });
+  saveRoster(); renderRegister();
+  document.getElementById("regMsg").textContent =
+    "1~10번을 한 세트로 맞췄습니다. 거래 기록은 그대로입니다 — 설정에서 초기화할 수 있습니다.";
 });
 function renderRegister(){
   const t = document.getElementById("regTable");
