@@ -134,7 +134,8 @@
 <!-- ============ 카드 등록 ============ -->
 <section id="register" class="screen">
   <h1>카드 등록</h1>
-  <p class="muted">카드를 하나씩 대면 아래 목록에 추가됩니다. 이름과 시작 잔액을 채워 주세요.</p>
+  <p class="muted">카드에 번호를 써 두었다면(NFC Tools 텍스트 <b>1</b>, <b>2</b> …) 등록할 것이 없습니다. 메인 화면에서 바로 대세요.</p>
+  <p class="muted">번호가 없는 카드만 하나씩 대면 아래에 순서대로 추가됩니다. 이 등록은 <b>이 폰에만</b> 남습니다.</p>
   <div id="regMsg" class="muted"></div>
   <div id="listWrap2" style="border:3px solid var(--line);border-radius:.7rem;overflow:auto;max-height:50dvh">
     <table id="regTable"></table>
@@ -181,7 +182,7 @@ const K_ROSTER = "card.roster.v1";
 const K_SESSION = "card.session.v1";
 const SCHEMA = 1;
 
-const DEFAULT_BALANCES = [1000,1500,1500,2000,2000,2500,3000,3000,3500,4000];
+const DEFAULT_BALANCES = [1000,1500,2000,2000,2500,2500,3000,3000,3500,4000];
 const DEFAULT_ITEMS = [
   {name:"아이스크림", amount:1000},
   {name:"음료",       amount:1500},
@@ -240,6 +241,51 @@ function balanceOf(cardNo){
 function cardByUid(uid){ return roster.cards.find(c => c.uid && c.uid === uid); }
 function cardByNo(no){ return roster.cards.find(c => c.no === no); }
 function labelOf(card){ return card.no + "번" + (card.name ? " " + card.name : ""); }
+
+/* ---- 카드에 적어 둔 번호 ----
+   카드가 자기 번호를 들고 다니면 폰마다 다시 등록할 필요가 없다.
+   NFC Tools로 텍스트 레코드 하나만 써 두면 된다: "1" 또는 "card:1" 또는 "1번".
+   읽지 못하면 null — 그때는 예전처럼 UID로 찾는다. */
+function cardNoFromMessage(msg){
+  if(!msg || !msg.records) return null;
+  const found = new Set();
+  for(const r of msg.records){
+    if(r.recordType !== "text") continue;
+    let t;
+    try{ t = new TextDecoder(r.encoding || "utf-8").decode(r.data).trim(); }
+    catch(e){ continue; }   // 깨진 레코드 하나가 카드 전체를 막지 않게 한다
+    // 형식을 좁게 잡는다. 수업과 무관한 NFC 태그를 카드로 오인하면 안 된다.
+    const m = /^(?:card:)?\s*(\d{1,2})\s*번?$/i.exec(t);
+    if(m){
+      const n = Number(m[1]);
+      if(n >= 1 && n <= 99) found.add(n);
+    }
+  }
+  // 번호가 둘 이상이면 고르지 않는다. NFC Tools에서 이전 레코드를 지우지 않고
+  // 새 번호를 더하면 이렇게 된다. 하나를 골랐다가는 엉뚱한 카드로 조용히 결제된다.
+  // 카드 오류로 넘겨서 강사가 소리로 알아채게 한다.
+  if(found.size !== 1) return null;
+  return [...found][0];
+}
+
+/* 카드에 적힌 번호로 명단 자리를 확보한다. 없으면 그 자리에서 만든다.
+   시작 잔액은 번호에서 나온다 — 카드에 금액을 적지 않는 이유다.
+   세트 구성을 바꾸고 싶을 때 카드 10장을 다시 쓰는 일이 없어야 한다. */
+function ensureCard(no, uid){
+  let c = cardByNo(no);
+  if(!c){
+    c = {no, uid: uid || null, name:"",
+         startBalance: DEFAULT_BALANCES[(no-1) % DEFAULT_BALANCES.length]};
+    roster.cards.push(c);
+    roster.cards.sort((a,b) => a.no - b.no);
+    saveRoster();
+    return c;
+  }
+  // 첫 UID만 기억한다. 번호가 이미 카드에 적혀 있으니 UID는 참고용일 뿐이고,
+  // 덮어쓰면 같은 번호를 두 장에 잘못 쓴 사고가 조용히 묻힌다.
+  if(uid && !c.uid){ c.uid = uid; saveRoster(); }
+  return c;
+}
 
 /* 미리 넣어둔 기계음 (Windows 한국어 음성으로 합성, 8kHz mono mp3).
    금액마다 완성 문장 하나씩 — 조각을 이어붙이지 않는다. */
@@ -366,12 +412,15 @@ function ensureAudio(){
   if(ac && ac.state === "suspended"){ try{ ac.resume(); }catch(e){} }
 }
 
-function handleTag(uid, manualCardNo){
+function handleTag(uid, manualCardNo, tagNo){
   ensureAudio();
-  const card = manualCardNo != null ? cardByNo(manualCardNo) : cardByUid(uid);
+  // 카드에 적힌 번호가 UID보다 우선한다 — 카드가 자기 정체의 근거다
+  const card = manualCardNo != null ? cardByNo(manualCardNo)
+             : tagNo != null        ? cardByNo(tagNo)
+             :                        cardByUid(uid);
 
   // 등록 화면에서는 태그가 '등록'을 뜻한다
-  if(current === "register"){ registerTag(uid); return; }
+  if(current === "register"){ registerTag(uid, tagNo); return; }
   if(current !== "main") return;
 
   if(!card){
@@ -554,7 +603,12 @@ async function startScan(){
   try{
     if(!ndef){
       ndef = new NDEFReader();
-      ndef.onreading = ev => handleTag(normUid(ev.serialNumber));
+      ndef.onreading = ev => {
+        const uid = normUid(ev.serialNumber);
+        const no  = cardNoFromMessage(ev.message);  // 카드에 적힌 번호. 없으면 null
+        if(no != null) ensureCard(no, uid);         // 등록 절차 없이 바로 쓸 수 있게 한다
+        handleTag(uid, null, no);
+      };
       ndef.onreadingerror = () => { /* 안 읽힘 = 무음. 다시 대면 된다 */ };
     }
     await ndef.scan();
@@ -604,8 +658,19 @@ function nextNo(){
   while(roster.cards.some(c => c.no === n)) n++;
   return n;
 }
-function registerTag(uid){
+function registerTag(uid, tagNo){
   const msg = document.getElementById("regMsg");
+
+  // 카드에 번호가 적혀 있으면 등록할 것이 없다. 자리는 이미 만들어져 있다.
+  if(tagNo != null){
+    const c = cardByNo(tagNo);
+    msg.textContent = tagNo + "번 — 카드에 적힌 번호입니다. 등록 필요 없음.";
+    enqueue(async () => { await sndDetect(); await wait(150); await sndOk(); });
+    if(c && !c.uid && uid){ c.uid = uid; saveRoster(); }
+    renderRegister();
+    return;
+  }
+
   if(!uid){ msg.textContent = "카드 번호를 읽지 못했습니다."; return; }
   const dup = cardByUid(uid);
   if(dup){   // 사후 탐지가 아니라 입력 시점에 막는다
